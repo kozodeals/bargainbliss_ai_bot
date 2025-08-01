@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  bargainbliss-bot:
+    build: .
+    container_name: bargainbliss-ai-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge 
