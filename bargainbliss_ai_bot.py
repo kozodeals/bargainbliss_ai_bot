@@ -233,19 +233,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome message with bot information in Hebrew"""
     welcome_text = (
-        "🎉 **ברוכים הבאים לבוט BargainBliss AI!**\n\n"
+        "**ברוכים הבאים לבוט BargainBliss AI!**\n\n"
         "אני יכול להמיר קישורי AliExpress לקישורי שותפים עבורך.\n\n"
         "**איך להשתמש:**\n"
         "1. שלח לי כל קישור מוצר מ-AliExpress\n"
-        "2. אני אצור קישור שותפים עם מעקב\n"
-        "3. שתף את הקישור כדי להרוויח עמלות!\n\n"
+        "2. אני אצור קישור שותפים עם מעקב\n\n"
         "**דוגמה:**\n"
         "שלח: https://www.aliexpress.com/item/1234567890.html\n\n"
-        "**פורמטים נתמכים:**\n"
-        "• https://www.aliexpress.com/item/...\n"
-        "• https://he.aliexpress.com/item/...\n"
-        "• https://us.aliexpress.com/item/...\n"
-        "• כל תת-דומיין של AliExpress עם /item/..."
+        "תודה שהשתמשת בבוט שלנו!"
     )
     await update.message.reply_text(welcome_text)
 
