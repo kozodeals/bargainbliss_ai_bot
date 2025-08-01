@@ -4,6 +4,7 @@ import time
 import re
 import logging
 import asyncio
+import hmac
 from collections import defaultdict
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -73,11 +74,42 @@ def is_valid_aliexpress_url(url):
             r'/wholesale/'
         ]
         
-        return any(re.search(pattern, parsed.path) for pattern in product_patterns)
+        # Check for shortened affiliate links
+        shortened_patterns = [
+            r'/e/_',  # Shortened affiliate links like /e/_opegQu9rmat
+            r'/deeplink',  # Deep link format
+            r'/s/',  # Another shortened format
+        ]
+        
+        # Check if it's a product URL
+        if any(re.search(pattern, parsed.path) for pattern in product_patterns):
+            return True
+            
+        # Check if it's a shortened affiliate link
+        if any(re.search(pattern, parsed.path) for pattern in shortened_patterns):
+            return True
+            
+        return False
     except:
         return False
 
-def generate_signature(params, secret_key):
+def generate_hmac_signature_upper(params, secret_key):
+    """Generate HMAC-SHA256 signature in uppercase for AliExpress API"""
+    # Sort parameters by key and concatenate
+    sorted_params = sorted(params.items())
+    param_string = ''.join([f"{k}{v}" for k, v in sorted_params])
+    
+    # Generate HMAC-SHA256 signature
+    signature = hmac.new(
+        secret_key.encode('utf-8'),
+        param_string.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest().upper()
+    
+    return signature
+
+def generate_md5_signature(params, secret_key):
+    """Generate MD5 signature for legacy API compatibility"""
     # Sort parameters by key and concatenate
     sorted_params = ''.join(f'{k}{v}' for k, v in sorted(params.items()))
     # Add secret key at the end
@@ -86,34 +118,121 @@ def generate_signature(params, secret_key):
     return hashlib.md5(sign_string.encode('utf-8')).hexdigest().upper()
 
 def generate_affiliate_link(product_url):
-    """Generate affiliate link with enhanced error handling"""
+    """Generate affiliate link using correct AliExpress API"""
     try:
-        # API endpoint
-        api_url = 'http://gw.api.alibaba.com/openapi/param2/2/portals.open/api.getPromotionLinks'
-        # Request parameters
-        params = {
-            'appKey': API_KEY,
-            'apiName': 'api.getPromotionLinks',
-            'fields': 'totalResults,trackingId,publisherId,url,promotionUrl',
-            'trackingId': TRACKING_ID,
-            'urls': product_url,
-            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
-        }
-        # Generate signature
-        params['sign'] = generate_signature(params, SECRET_KEY)
+        parsed_url = urlparse(product_url)
         
-        # Make API call with timeout
-        response = requests.get(api_url, params=params, timeout=10)
+        # Check if this is already a shortened affiliate link
+        shortened_patterns = [
+            r'/e/_',  # Shortened affiliate links like /e/_opegQu9rmat
+            r'/deeplink',  # Deep link format
+            r'/s/',  # Another shortened format
+        ]
+        
+        is_shortened_link = any(re.search(pattern, parsed_url.path) for pattern in shortened_patterns)
+        
+        if is_shortened_link:
+            # For shortened links, add tracking parameters and return as-is
+            logger.info("Detected shortened affiliate link, adding tracking parameters")
+            
+            # Add tracking parameters to the shortened link
+            tracking_params = {
+                'aff_platform': 'telegram',
+                'aff_trace_key': TRACKING_ID,
+                'utm_source': 'bargainbliss_bot',
+                'utm_medium': 'telegram',
+                'utm_campaign': 'affiliate'
+            }
+            
+            # Build the final URL with tracking parameters
+            from urllib.parse import urlencode
+            final_url = f"{product_url}?{urlencode(tracking_params)}"
+            
+            logger.info(f"Generated tracking-enhanced shortened link: {final_url}")
+            return final_url
+        
+        # Extract product ID from regular product URL
+        product_id_match = re.search(r'/item/(\d+)', parsed_url.path)
+        
+        if not product_id_match:
+            logger.error("Could not extract product ID from URL")
+            return None
+            
+        product_id = product_id_match.group(1)
+        
+        # First, try to query for the specific product
+        api_url = 'https://api-sg.aliexpress.com/sync'
+        
+        # Query parameters
+        query_params = {
+            'app_key': API_KEY,
+            'method': 'aliexpress.affiliate.product.query',
+            'format': 'json',
+            'v': '2.0',
+            'sign_method': 'sha256',
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+            'keywords': product_id,  # Use product ID as keyword
+            'tracking_id': TRACKING_ID
+        }
+        
+        # Generate HMAC-SHA256 signature in uppercase
+        query_params['sign'] = generate_hmac_signature_upper(query_params, SECRET_KEY)
+        
+        # Make query API call
+        response = requests.get(api_url, params=query_params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Check if we got products from the query
+        if 'aliexpress_affiliate_product_query_response' in data:
+            resp = data['aliexpress_affiliate_product_query_response']
+            if 'resp_result' in resp and 'result' in resp['resp_result']:
+                products = resp['resp_result']['result'].get('products', {}).get('product', [])
+                if products:
+                    # Use the first product's promotion link
+                    if isinstance(products, list) and len(products) > 0:
+                        promotion_link = products[0].get('promotion_link')
+                        if promotion_link:
+                            logger.info(f"Found promotion link from product query")
+                            return promotion_link
+        
+        # If product query didn't work, try direct link generation
+        logger.info("Product query didn't work, trying direct link generation...")
+        
+        # Direct link generation parameters
+        link_params = {
+            'app_key': API_KEY,
+            'method': 'aliexpress.affiliate.link.generate',
+            'format': 'json',
+            'v': '2.0',
+            'sign_method': 'sha256',
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
+            'product_id': product_id,
+            'tracking_id': TRACKING_ID,
+            'source_url': product_url,
+            'promotion_link_type': '0',
+            'source_values': 'telegram_bot'
+        }
+        
+        # Generate HMAC-SHA256 signature in uppercase
+        link_params['sign'] = generate_hmac_signature_upper(link_params, SECRET_KEY)
+        
+        # Make direct link generation API call
+        response = requests.get(api_url, params=link_params, timeout=10)
         response.raise_for_status()
         data = response.json()
         
         # Check for API errors
-        if 'error' in data:
-            logger.error(f"API Error: {data['error']}")
+        if 'error_response' in data:
+            logger.error(f"API Error: {data['error_response']}")
             return None
             
-        if 'promotionUrl' in data.get('result', {}):
-            return data['result']['promotionUrl']
+        if 'result' in data and 'promotion_link' in data['result']:
+            logger.info(f"Success with direct link generation")
+            return data['result']['promotion_link']
+        elif 'result' in data and 'url' in data['result']:
+            logger.info(f"Success with direct link generation (alternative field)")
+            return data['result']['url']
         return None
         
     except requests.exceptions.RequestException as e:
@@ -202,7 +321,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• https://www.aliexpress.com/item/1234567890.html\n"
             "• https://m.aliexpress.com/item/1234567890.html\n"
             "• https://he.aliexpress.com/item/1234567890.html\n"
-            "• https://us.aliexpress.com/item/1234567890.html\n\n"
+            "• https://us.aliexpress.com/item/1234567890.html\n"
+            "• https://s.click.aliexpress.com/e/_opegQu9rmat\n\n"
             "**הערה:** כל תת-דומיין של AliExpress נתמך!"
         )
         return
