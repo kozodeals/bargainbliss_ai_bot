@@ -312,18 +312,41 @@ def main():
         logger.error("API connection failed. Check credentials and network.")
         return
     
-    # Initialize the application
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    try:
+        # Initialize the application with more compatible settings
+        application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("health", health_check))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("health", health_check))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Start the bot
-    logger.info("Bot started successfully!")
-    application.run_polling()
+        # Start the bot with error handling
+        logger.info("Bot started successfully!")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        # Try alternative startup method
+        try:
+            from telegram.ext import Updater
+            updater = Updater(token=TELEGRAM_TOKEN)
+            dispatcher = updater.dispatcher
+            
+            # Add handlers
+            dispatcher.add_handler(CommandHandler("start", start))
+            dispatcher.add_handler(CommandHandler("health", health_check))
+            dispatcher.add_handler(CommandHandler("help", help_command))
+            dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            
+            logger.info("Bot started successfully with alternative method!")
+            updater.start_polling()
+            updater.idle()
+            
+        except Exception as e2:
+            logger.error(f"Alternative startup also failed: {e2}")
+            return
 
 if __name__ == '__main__':
     main()
