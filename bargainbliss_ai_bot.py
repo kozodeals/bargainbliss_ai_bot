@@ -172,10 +172,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     message_text = update.message.text
     
+    # Security: Only allow private chats
+    if update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "❌ **בוט זה עובד רק בצ'אט פרטי**\n\n"
+            "אנא שלח הודעה פרטית לבוט כדי להשתמש בו."
+        )
+        return
+    
     # Rate limiting
     if not rate_limiter.is_allowed(user_id):
         await update.message.reply_text(
-            "⚠️ Rate limit exceeded. Please try again in a minute."
+            "⚠️ גבול הגבול חרג. אנא נסה שוב בדקה."
         )
         return
     
@@ -188,107 +196,58 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Validate URL
     if not is_valid_aliexpress_url(message_text):
         await update.message.reply_text(
-            "❌ **Invalid URL format**\n\n"
-            "Please send a valid AliExpress product link.\n\n"
-            "**Examples:**\n"
+            "❌ **פורמט URL לא תקין**\n\n"
+            "אנא שלח קישור מוצר תקין מ-AliExpress.\n\n"
+            "**דוגמאות:**\n"
             "• https://www.aliexpress.com/item/1234567890.html\n"
             "• https://m.aliexpress.com/item/1234567890.html\n"
             "• https://he.aliexpress.com/item/1234567890.html\n"
             "• https://us.aliexpress.com/item/1234567890.html\n\n"
-            "**Note:** Any AliExpress subdomain is supported!"
+            "**הערה:** כל תת-דומיין של AliExpress נתמך!"
         )
         return
     
     # Send processing message
-    processing_msg = await update.message.reply_text("🔄 Generating affiliate link...")
+    processing_msg = await update.message.reply_text("🔄 יוצר קישור שותפים...")
     
     # Generate affiliate link
     affiliate_link = generate_affiliate_link(message_text)
     
     if affiliate_link:
         await processing_msg.edit_text(
-            f"✅ **Affiliate Link Generated!**\n\n"
+            f"✅ **קישור השותפים נוצר!**\n\n"
             f"🔗 {affiliate_link}\n\n"
-            f"💡 **Share this link to earn commissions on purchases!**\n\n"
-            f"📊 **Tracking ID:** {TRACKING_ID}"
+            f"💡 **שתף קישור זה כדי להרוויח עמלות על רכישות!**\n\n"
+            f"📊 **מזהה מעקב:** {TRACKING_ID}"
         )
     else:
         await processing_msg.edit_text(
-            "❌ **Failed to generate affiliate link**\n\n"
-            "**Possible reasons:**\n"
-            "• Product not available for affiliate program\n"
-            "• API service temporarily unavailable\n"
-            "• Invalid product URL\n\n"
-            "Please try again or contact support."
+            "❌ **נכשל ביצירת קישור השותפים**\n\n"
+            "**סיבות אפשריות:**\n"
+            "• המוצר לא זמין בתוכנית השותפים\n"
+            "• שירות ה-API זמנית לא זמין\n"
+            "• קישור מוצר לא תקין\n\n"
+            "אנא נסה שוב או פנה לתמיכה."
         )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome message with bot information"""
+    """Welcome message with bot information in Hebrew"""
     welcome_text = (
-        "🎉 **Welcome to BargainBliss AI Bot!**\n\n"
-        "I can convert AliExpress product links into affiliate links for you.\n\n"
-        "**How to use:**\n"
-        "1. Send me any AliExpress product URL\n"
-        "2. I'll generate an affiliate link with tracking\n"
-        "3. Share the link to earn commissions!\n\n"
-        "**Commands:**\n"
-        "• /start - Show this message\n"
-        "• /health - Check bot status\n"
-        "• /help - Show help information\n\n"
-        "**Example:**\n"
-        "Send: https://www.aliexpress.com/item/1234567890.html"
-    )
-    await update.message.reply_text(welcome_text)
-
-async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check if the bot and API are working"""
-    try:
-        # Test API connection
-        test_url = "https://www.aliexpress.com/item/1005001234567890.html"
-        result = generate_affiliate_link(test_url)
-        
-        if result:
-            await update.message.reply_text(
-                "✅ **Bot Status: OPERATIONAL**\n\n"
-                "• API connection: ✅ Working\n"
-                "• Rate limiting: ✅ Active\n"
-                "• URL validation: ✅ Active\n\n"
-                "Everything is working properly!"
-            )
-        else:
-            await update.message.reply_text(
-                "⚠️ **Bot Status: PARTIAL**\n\n"
-                "• Bot is running ✅\n"
-                "• API may have issues ⚠️\n\n"
-                "Please try again later."
-            )
-    except Exception as e:
-        await update.message.reply_text(f"❌ **Bot Error:** {str(e)}")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show help information"""
-    help_text = (
-        "📚 **Help & Support**\n\n"
-        "**How to use the bot:**\n"
-        "1. Find an AliExpress product you want to promote\n"
-        "2. Copy the product URL\n"
-        "3. Send it to this bot\n"
-        "4. Get your affiliate link with tracking\n\n"
-        "**Supported URL formats:**\n"
+        "🎉 **ברוכים הבאים לבוט BargainBliss AI!**\n\n"
+        "אני יכול להמיר קישורי AliExpress לקישורי שותפים עבורך.\n\n"
+        "**איך להשתמש:**\n"
+        "1. שלח לי כל קישור מוצר מ-AliExpress\n"
+        "2. אני אצור קישור שותפים עם מעקב\n"
+        "3. שתף את הקישור כדי להרוויח עמלות!\n\n"
+        "**דוגמה:**\n"
+        "שלח: https://www.aliexpress.com/item/1234567890.html\n\n"
+        "**פורמטים נתמכים:**\n"
         "• https://www.aliexpress.com/item/...\n"
-        "• https://m.aliexpress.com/item/...\n"
         "• https://he.aliexpress.com/item/...\n"
         "• https://us.aliexpress.com/item/...\n"
-        "• Any AliExpress subdomain with /item/...\n\n"
-        "**Rate Limits:**\n"
-        "• 60 requests per hour per user\n\n"
-        "**Commands:**\n"
-        "• /start - Welcome message\n"
-        "• /health - Check bot status\n"
-        "• /help - This help message\n\n"
-        "**Need help?** Contact the bot administrator."
+        "• כל תת-דומיין של AliExpress עם /item/..."
     )
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(welcome_text)
 
 def test_api_connection():
     """Test the API connection (primary and alternative methods)"""
@@ -316,10 +275,8 @@ def main():
         # Initialize the application with more compatible settings
         application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-        # Add handlers
+        # Add handlers - streamlined for business use
         application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("health", health_check))
-        application.add_handler(CommandHandler("help", help_command))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
         # Start the bot with error handling
@@ -334,10 +291,8 @@ def main():
             updater = Updater(token=TELEGRAM_TOKEN)
             dispatcher = updater.dispatcher
             
-            # Add handlers
+            # Add handlers - streamlined for business use
             dispatcher.add_handler(CommandHandler("start", start))
-            dispatcher.add_handler(CommandHandler("health", health_check))
-            dispatcher.add_handler(CommandHandler("help", help_command))
             dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             
             logger.info("Bot started successfully with alternative method!")
