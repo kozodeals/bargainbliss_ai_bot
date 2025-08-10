@@ -17,6 +17,7 @@ def test_shortened_links():
     # Test URLs
     test_urls = [
         "https://s.click.aliexpress.com/e/_opegQu9rmat",
+        "https://s.click.aliexpress.com/e/_opx2wit",  # User's specific link
         "https://www.aliexpress.com/item/1005004842197456.html",
         "https://s.click.aliexpress.com/deeplink?aff_short_key=abc123",
         "https://www.aliexpress.com/s/item/1234567890.html"

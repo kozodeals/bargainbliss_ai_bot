@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Telegram bot for generating AliExpress affiliate links
-Updated with working API method
+Updated with working API method and web interface
 """
 
 import os
@@ -12,12 +12,18 @@ import hashlib
 import aiohttp
 import asyncio
 import re
+import json
+import secrets
 from urllib.parse import urlparse
 from collections import defaultdict
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram import Update
 from message_manager import message_manager
+from aiohttp import web
+from aiohttp_session import setup, get_session, Session
+from aiohttp_session.cookie_storage import EncryptedCookieStorage
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -557,87 +563,36 @@ def test_api_connection():
         return False
 
 def validate_aliexpress_url_detailed(url):
-    """Validate AliExpress URL and return detailed error information"""
+    """Validate AliExpress URLs more thoroughly"""
     try:
-        # Add debug logging
-        logger.info(f"🔍 Validating URL: '{url}'")
-        logger.info(f"🔍 URL length: {len(url)}")
-        logger.info(f"🔍 URL starts with https://: {url.startswith('https://')}")
-        logger.info(f"🔍 URL starts with http://: {url.startswith('http://')}")
-        logger.info(f"🔍 URL bytes: {url.encode('utf-8')}")
-        
-        # First, try to clean the URL to remove invisible characters
+        # First, clean the URL to remove common problematic characters
         cleaned_url = clean_url_for_validation(url)
-        if cleaned_url and cleaned_url != url:
-            logger.info(f"🔍 URL cleaned from '{url}' to '{cleaned_url}'")
-            # If cleaning helped, validate the cleaned version
-            return validate_aliexpress_url_detailed(cleaned_url)
+        if not cleaned_url:
+            return False
+            
+        parsed = urlparse(cleaned_url)
         
-        # Check if URL is empty or too short
-        if not url or len(url.strip()) < 10:
-            logger.warning(f"URL too short or empty: '{url}'")
-            return {
-                'is_valid': False,
-                'error_message': 'הקישור קצר מדי או ריק'
-            }
-        
-        # Check if URL starts with http/https
-        if not url.startswith(('http://', 'https://')):
-            logger.warning(f"URL doesn't start with http/https: '{url}'")
-            return {
-                'is_valid': False,
-                'error_message': 'הקישור חייב להתחיל ב-http:// או https://'
-            }
-        
-        # Check for extremely long URLs
-        if len(url) > 500:
-            logger.warning(f"URL too long: {len(url)} characters")
-            return {
-                'is_valid': False,
-                'error_message': 'הקישור ארוך מדי (מעל 500 תווים)'
-            }
-        
-        # Check for problematic characters
-        problematic_chars = ['\u200B', '\u200C', '\u200D', '\uFEFF', '\u2028', '\u2029']
-        for char in problematic_chars:
-            if char in url:
-                logger.warning(f"URL contains problematic character: {repr(char)}")
-                return {
-                    'is_valid': False,
-                    'error_message': 'הקישור מכיל תווים לא תקינים'
-                }
-        
-        # Check for double encoding
-        if '%25' in url or '%%' in url:
-            logger.warning(f"URL contains double encoding")
-            return {
-                'is_valid': False,
-                'error_message': 'הקישור מכיל קידוד כפול'
-            }
-        
-        # Try to parse the URL
-        try:
-            parsed = urlparse(url)
-            logger.info(f"🔍 Parsed URL - scheme: {parsed.scheme}, netloc: {parsed.netloc}, path: {parsed.path}")
-        except Exception as e:
-            logger.error(f"Failed to parse URL: {e}")
-            return {
-                'is_valid': False,
-                'error_message': 'הקישור לא בפורמט תקין'
-            }
-        
-        # Check domain
+        # Check for AliExpress domains (including country-specific subdomains)
+        # Accept any subdomain of aliexpress.com or the root domain
         if not (parsed.netloc.endswith('.aliexpress.com') or parsed.netloc == 'aliexpress.com'):
-            logger.warning(f"URL domain not AliExpress: {parsed.netloc}")
-            return {
-                'is_valid': False,
-                'error_message': 'הקישור חייב להיות מ-AliExpress'
-            }
-        
+            return False
+            
         # Check for product patterns
-        product_patterns = [r'/item/', r'/product/', r'/wholesale/']
-        shortened_patterns = [r'/e/_', r'/deeplink', r'/s/', r'/_[a-zA-Z0-9]+']
+        product_patterns = [
+            r'/item/',
+            r'/product/',
+            r'/wholesale/'
+        ]
         
+        # Check for shortened affiliate links - expanded to include more formats
+        shortened_patterns = [
+            r'/e/_',  # Shortened affiliate links like /e/_opegQu9rmat
+            r'/deeplink',  # Deep link format
+            r'/s/',  # Another shortened format
+            r'/_[a-zA-Z0-9]+',  # New format like /_mrgRqdB
+        ]
+        
+        # Check if it's a product URL
         has_product_pattern = any(re.search(pattern, parsed.path) for pattern in product_patterns)
         has_shortened_pattern = any(re.search(pattern, parsed.path) for pattern in shortened_patterns)
         
@@ -661,8 +616,326 @@ def validate_aliexpress_url_detailed(url):
             'error_message': 'שגיאה בבדיקת הקישור'
         }
 
+# Web server functions
+async def check_auth(request):
+    """Check if user is authenticated"""
+    session = await get_session(request)
+    return session.get('authenticated', False)
+
+async def require_auth(handler):
+    """Decorator to require authentication"""
+    async def wrapper(request):
+        if not await check_auth(request):
+            return web.HTTPFound('/login')
+        return await handler(request)
+    return wrapper
+
+async def login_page(request):
+    """Login page"""
+    session = await get_session(request)
+    
+    # If already logged in, redirect to messages
+    if await check_auth(request):
+        return web.HTTPFound('/messages')
+    
+    # Handle login form submission
+    if request.method == 'POST':
+        data = await request.post()
+        username = data.get('username', '')
+        password = data.get('password', '')
+        
+        # Get credentials from environment variables
+        admin_username = os.getenv('ADMIN_USERNAME', 'admin')
+        admin_password = os.getenv('ADMIN_PASSWORD', 'admin123')
+        
+        if username == admin_username and password == admin_password:
+            session['authenticated'] = True
+            session['username'] = username
+            logger.info(f"User {username} logged in successfully")
+            return web.HTTPFound('/messages')
+        else:
+            error_msg = "Invalid username or password"
+            return web.Response(
+                text=login_html(error_msg),
+                content_type='text/html'
+            )
+    
+    # Show login form
+    return web.Response(
+        text=login_html(),
+        content_type='text/html'
+    )
+
+async def logout(request):
+    """Logout user"""
+    session = await get_session(request)
+    session.invalidate()
+    logger.info("User logged out")
+    return web.HTTPFound('/login')
+
+async def messages_editor(request):
+    """Message editor interface (protected)"""
+    if not await check_auth(request):
+        return web.HTTPFound('/login')
+    
+    session = await get_session(request)
+    username = session.get('username', 'Unknown')
+    
+    if request.method == 'POST':
+        data = await request.post()
+        action = data.get('action', '')
+        
+        if action == 'save_message':
+            key = data.get('key', '')
+            content = data.get('content', '')
+            
+            try:
+                # Load current config
+                with open('config.json', 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                
+                # Update message
+                if 'messages' in config:
+                    config['messages'][key] = content
+                    
+                    # Save back to file
+                    with open('config.json', 'w', encoding='utf-8') as f:
+                        json.dump(config, f, ensure_ascii=False, indent=2)
+                    
+                    logger.info(f"Message '{key}' updated by user {username}")
+                    success_msg = f"Message '{key}' saved successfully!"
+                else:
+                    success_msg = "Error: No messages section found in config"
+                    
+            except Exception as e:
+                logger.error(f"Error saving message: {e}")
+                success_msg = f"Error saving message: {str(e)}"
+            
+            return web.Response(
+                text=messages_editor_html(success_msg),
+                content_type='text/html'
+            )
+    
+    # Show message editor
+    return web.Response(
+        text=messages_editor_html(),
+        content_type='text/html'
+    )
+
+def login_html(error_msg=None):
+    """Generate login page HTML"""
+    error_html = f'<div class="alert alert-danger">{error_msg}</div>' if error_msg else ''
+    
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>BargainBliss Bot - Login</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <style>
+            body {{ background-color: #f8f9fa; }}
+            .login-container {{ max-width: 400px; margin: 100px auto; }}
+            .card {{ border: none; border-radius: 15px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="login-container">
+                <div class="card">
+                    <div class="card-body p-4">
+                        <h3 class="text-center mb-4">🔐 Bot Login</h3>
+                        {error_html}
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="username" name="username" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="password" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Login</button>
+                        </form>
+                        <div class="text-center mt-3">
+                            <small class="text-muted">BargainBliss AI Bot Admin</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+def messages_editor_html(success_msg=None):
+    """Generate message editor HTML"""
+    try:
+        # Load current messages
+        with open('config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        messages = config.get('messages', {})
+    except Exception as e:
+        messages = {}
+        logger.error(f"Error loading config: {e}")
+    
+    success_html = f'<div class="alert alert-success">{success_msg}</div>' if success_msg else ''
+    
+    messages_html = ""
+    for key, content in messages.items():
+        messages_html += f"""
+        <div class="card mb-3">
+            <div class="card-header">
+                <strong>{key}</strong>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="action" value="save_message">
+                    <input type="hidden" name="key" value="{key}">
+                    <div class="mb-3">
+                        <textarea class="form-control" name="content" rows="4" required>{content}</textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">Save Changes</button>
+                </form>
+            </div>
+        </div>
+        """
+    
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>BargainBliss Bot - Message Editor</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <style>
+            body {{ background-color: #f8f9fa; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }}
+        </style>
+    </head>
+    <body>
+        <div class="header py-3 mb-4">
+            <div class="container">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">📝 Message Editor</h4>
+                    <div>
+                        <a href="/logout" class="btn btn-outline-light btn-sm">Logout</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="container">
+            {success_html}
+            
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">Edit Bot Messages</h5>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Edit your bot's messages below. Changes are saved automatically.</p>
+                            {messages_html}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+async def health_check(request):
+    """Health check endpoint for Render"""
+    return web.json_response({
+        'status': 'healthy',
+        'bot': 'running',
+        'timestamp': time.time(),
+        'service': 'BargainBliss AI Bot'
+    })
+
+async def status_page(request):
+    """Status page showing bot information"""
+    return web.json_response({
+        'service': 'BargainBliss AI Bot',
+        'status': 'operational',
+        'uptime': time.time() - start_time if 'start_time' in globals() else 0,
+        'features': [
+            'AliExpress affiliate link generation',
+            'URL validation and cleaning',
+            'Rate limiting',
+            'Multi-language support'
+        ],
+        'endpoints': {
+            '/health': 'Health check for monitoring',
+            '/status': 'Detailed status information',
+            '/': 'This status page'
+        }
+    })
+
+async def root_handler(request):
+    """Root endpoint"""
+    return web.json_response({
+        'message': 'BargainBliss AI Bot is running!',
+        'endpoints': {
+            '/health': 'Health check for Render',
+            '/status': 'Status information',
+            '/login': 'Secure login page',
+            '/messages': 'Message editor (requires login)'
+        },
+        'note': 'Use /login to access the message editor'
+    })
+
+async def start_web_server():
+    """Start the web server"""
+    app = web.Application()
+    
+    # Setup session middleware
+    setup(app, EncryptedCookieStorage(secrets.token_urlsafe(32)))
+    
+    # Add routes
+    app.router.add_get('/', root_handler)
+    app.router.add_get('/health', health_check)
+    app.router.add_get('/status', status_page)
+    app.router.add_get('/login', login_page)
+    app.router.add_post('/login', login_page)
+    app.router.add_get('/logout', logout)
+    app.router.add_get('/messages', messages_editor)
+    app.router.add_post('/messages', messages_editor)
+    
+    # Get port from environment or use default
+    port = int(os.getenv('PORT', 8080))
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    
+    logger.info(f"🌐 Starting web server on port {port}")
+    await site.start()
+    logger.info(f"✅ Web server started successfully on port {port}")
+    
+    # Show helpful URLs
+    logger.info("🔗 Available endpoints:")
+    logger.info(f"   • Health check: http://localhost:{port}/health")
+    logger.info(f"   • Status page: http://localhost:{port}/status")
+    logger.info(f"   • Login page: http://localhost:{port}/login")
+    logger.info(f"   • Message editor: http://localhost:{port}/messages")
+    logger.info("🔐 Default login credentials: admin / admin123")
+    logger.info("💡 Set ADMIN_USERNAME and ADMIN_PASSWORD environment variables to change credentials")
+    
+    # Keep the server running
+    while True:
+        await asyncio.sleep(1)
+
 def main():
     """Main function"""
+    global start_time
+    start_time = time.time()
+    
     logger.info("Starting Telegram bot...")
     
     # Test API connection
@@ -681,7 +954,28 @@ def main():
     
     # Start the bot
     logger.info("Bot started successfully!")
-    application.run_polling()
+    
+    # Run both bot and web server concurrently
+    async def run_both():
+        # Start web server in background
+        web_task = asyncio.create_task(start_web_server())
+        
+        # Start bot
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        # Keep both running
+        try:
+            await web_task
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
+    
+    # Run the async event loop
+    asyncio.run(run_both())
 
 if __name__ == "__main__":
     main()

@@ -1,133 +1,94 @@
-# 🌐 Bot Message Editor - Web Interface
+# Web Interface for BargainBliss AI Bot
 
-A beautiful, user-friendly web interface for managing your Telegram bot messages without touching any code!
+## Overview
+The bot now includes a built-in web server that starts automatically alongside the Telegram bot. This provides HTTP endpoints for health checks and monitoring, solving the Render port scan timeout issue.
 
-## ✨ Features
+## Features
 
-- **📱 Modern Web Interface** - Clean, responsive design that works on all devices
-- **🔍 Search Messages** - Find messages by key or content
-- **✏️ Edit Messages** - Easy inline editing with live preview
-- **➕ Add New Messages** - Create new bot messages with helpful suggestions
-- **🗑️ Delete Messages** - Remove unwanted messages with confirmation
-- **👁️ Live Preview** - See how your messages will look before saving
-- **💾 Auto-save** - Changes are automatically saved to `config.json`
+### 🚀 **Automatic Startup**
+- Web server starts automatically when you run the bot
+- No need to run separate processes
+- Both bot and web server run concurrently
 
-## 🚀 Quick Start
+### 🌐 **HTTP Endpoints**
 
-### 1. Start the Web Interface
+#### `/` - Root Endpoint
+- **Purpose**: Basic status and endpoint information
+- **Response**: JSON with service info and available endpoints
+- **Use Case**: General health check and service discovery
 
+#### `/health` - Health Check
+- **Purpose**: Render health check endpoint
+- **Response**: JSON with health status and timestamp
+- **Use Case**: Monitoring and deployment health checks
+
+#### `/status` - Detailed Status
+- **Purpose**: Comprehensive service information
+- **Response**: JSON with uptime, features, and detailed status
+- **Use Case**: Monitoring dashboard and debugging
+
+## Configuration
+
+### Port Configuration
+- **Default Port**: 8080
+- **Environment Variable**: `PORT`
+- **Example**: `PORT=3000 python bargainbliss_ai_bot.py`
+
+### Render Deployment
+- **Service Type**: Web Service (not Background Worker)
+- **Port**: Will automatically use the `PORT` environment variable
+- **Health Check**: Use `/health` endpoint
+
+## How It Works
+
+1. **Single Process**: One Python process runs both the bot and web server
+2. **Async Architecture**: Uses `asyncio` for concurrent operation
+3. **Automatic Binding**: Binds to `0.0.0.0` on the specified port
+4. **Graceful Shutdown**: Both services stop together on interruption
+
+## Testing
+
+### Local Testing
 ```bash
-python web_interface.py
+# Start the bot (web server starts automatically)
+python bargainbliss_ai_bot.py
+
+# Test endpoints in another terminal
+python test_web_server.py
 ```
 
-### 2. Open Your Browser
+### Manual Testing
+```bash
+# Test health endpoint
+curl http://localhost:8080/health
 
-Navigate to: **http://localhost:5000**
+# Test status endpoint
+curl http://localhost:8080/status
 
-### 3. Start Editing!
-
-- **View All Messages**: See all your bot messages in a card layout
-- **Edit Messages**: Click the edit button on any message card
-- **Add New Messages**: Use the "Add New Message" button
-- **Search**: Use the search bar to find specific messages
-
-## 🎯 How to Use
-
-### Editing Messages
-
-1. Click the **Edit** button (✏️) on any message card
-2. Modify the message content in the text area
-3. Use `\n` for line breaks
-4. See live preview on the right side
-5. Click **Save Changes** when done
-
-### Adding New Messages
-
-1. Click **Add New Message** button
-2. Enter a descriptive key (e.g., `welcome_message`)
-3. Write your message content
-4. Use the **Key Suggestions** button for ideas
-5. Click **Create Message**
-
-### Searching Messages
-
-1. Use the search bar at the top
-2. Search by message key or content
-3. Results are highlighted for easy identification
-
-## 🔧 Message Formatting
-
-### Line Breaks
-Use `\n` to create new lines:
-```
-שלום! אני בוט שמסייע בהמרת קישורי AliExpress.\n\n📋 איך להשתמש:\n1. שלח לי קישור
+# Test root endpoint
+curl http://localhost:8080/
 ```
 
-### HTML Support
-Basic HTML tags are supported:
-- `<b>Bold text</b>`
-- `<i>Italic text</i>`
-- `<code>Code text</code>`
+## Benefits
 
-## 📁 File Structure
+✅ **Solves Render Timeout**: Provides HTTP endpoints for health checks  
+✅ **No Extra Processes**: Everything runs in one application  
+✅ **Easy Monitoring**: Built-in status and health endpoints  
+✅ **Production Ready**: Proper error handling and logging  
+✅ **Port Flexibility**: Configurable via environment variables  
 
-```
-templates/
-├── index.html          # Main dashboard
-├── edit.html           # Edit message form
-├── add.html            # Add new message form
-└── search.html         # Search results
-
-web_interface.py        # Flask web application
-message_manager.py      # Message management backend
-config.json            # Bot messages and settings
-```
-
-## 🛠️ Technical Details
-
-- **Backend**: Flask web framework
-- **Frontend**: Bootstrap 5 + Font Awesome icons
-- **Data Storage**: JSON file (`config.json`)
-- **Real-time**: Live preview and character counting
-- **Responsive**: Works on desktop, tablet, and mobile
-
-## 🔒 Security Notes
-
-- The web interface runs locally by default
-- Change the secret key in production
-- Consider adding authentication for production use
-
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Port Already in Use
-If you get a port error, change the port in `web_interface.py`:
-```python
-app.run(debug=True, host='0.0.0.0', port=5001)  # Change 5000 to 5001
-```
+- Change the `PORT` environment variable
+- Check if another service is using the port
 
-### Template Errors
-Make sure all template files are in the `templates/` folder and the folder name is exactly correct.
+### Web Server Not Starting
+- Check logs for port binding errors
+- Verify `aiohttp` is installed
+- Ensure no firewall blocking the port
 
-### Message Manager Errors
-Ensure `message_manager.py` and `config.json` are in the same directory as `web_interface.py`.
-
-## 🎉 Benefits Over Command Line
-
-- **Visual Interface**: See all messages at once
-- **Live Preview**: Know exactly how messages will look
-- **Easy Navigation**: Click to edit, no need to remember keys
-- **Search Functionality**: Find messages quickly
-- **Mobile Friendly**: Edit from your phone or tablet
-- **No Code Knowledge Required**: Perfect for non-technical users
-
-## 🔄 Integration with Bot
-
-The web interface automatically updates the same `config.json` file that your bot uses. After making changes:
-
-1. Save your changes in the web interface
-2. The bot will automatically use the new messages
-3. No need to restart the bot (unless you're using the old hardcoded system)
-
----
-
-**Happy Message Editing! 🎨✨** 
+### Render Still Timing Out
+- Verify the `/health` endpoint is accessible
+- Check that the service is binding to the correct port
+- Ensure the service type is "Web Service" on Render 
