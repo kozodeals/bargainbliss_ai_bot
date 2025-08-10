@@ -21,8 +21,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telegram import Update
 from message_manager import message_manager
 from aiohttp import web
-from aiohttp_session import setup, get_session, Session
-from aiohttp_session.cookie_storage import EncryptedCookieStorage
 import threading
 
 # Load environment variables
@@ -150,10 +148,20 @@ def clean_url_for_validation(url):
             except:
                 return None
         
-        # Check for extremely long URLs (likely problematic)
-        if len(cleaned) > 500:
+        # Check for extremely long URLs (increased limit for expanded AliExpress URLs)
+        if len(cleaned) > 1000:  # Increased from 500 to 1000
             logger.warning(f"URL too long after cleaning ({len(cleaned)} characters): {cleaned[:100]}...")
-            return None
+            # For very long URLs, try to extract just the essential product part
+            if 'aliexpress.com/item/' in cleaned:
+                # Extract just the product ID and basic structure
+                product_match = re.search(r'(https?://[^/]+/item/\d+\.html)', cleaned)
+                if product_match:
+                    cleaned = product_match.group(1)
+                    logger.info(f"Extracted clean product URL from long URL: {cleaned}")
+                else:
+                    return None
+            else:
+                return None
         
         # Check for malformed URL structure
         if not cleaned.startswith(('http://', 'https://')):
@@ -246,7 +254,17 @@ async def aliexpress_api_request(params):
             async with session.get(api_url, params=params, timeout=15) as response:
                 if response.status == 200:
                     data = await response.json()
-                    logger.info(f"Response Data: {data}")
+                    logger.info(f"🔍 API Response Status: {response.status}")
+                    logger.info(f"🔍 API Response Data: {data}")
+                    
+                    # Check if response contains error information
+                    if 'error_response' in data:
+                        logger.error(f"❌ API Error: {data['error_response']}")
+                    elif 'aliexpress_affiliate_link_generate_response' in data:
+                        logger.info(f"✅ API Success Response Structure Detected")
+                    else:
+                        logger.warning(f"⚠️ Unexpected API Response Structure: {list(data.keys())}")
+                    
                     return data
                 else:
                     logger.error(f"HTTP Error: {response.status}")
@@ -485,10 +503,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 affiliate_url=affiliate_link, 
                 tracking_id=TRACKING_ID
             )
+            logger.info(f"🎯 Sending SUCCESS response to user:")
+            logger.info(f"   Original URL: {message_text}")
+            logger.info(f"   Generated Affiliate Link: {affiliate_link}")
+            logger.info(f"   Tracking ID: {TRACKING_ID}")
             await processing_msg.edit_text(success_message, parse_mode='HTML')
         else:
             # Error message
             error_message = message_manager.get_message("api_error")
+            logger.error(f"❌ Failed to generate affiliate link for: {message_text}")
             await processing_msg.edit_text(error_message, parse_mode='HTML')
             
     except Exception as e:
@@ -619,21 +642,20 @@ def validate_aliexpress_url_detailed(url):
 # Web server functions
 async def check_auth(request):
     """Check if user is authenticated"""
-    session = await get_session(request)
-    return session.get('authenticated', False)
+    # Simple authentication check: check for a cookie named 'authenticated'
+    return request.cookies.get('authenticated') == 'true'
 
 async def require_auth(handler):
     """Decorator to require authentication"""
     async def wrapper(request):
         if not await check_auth(request):
+            # Redirect to login page if not authenticated
             return web.HTTPFound('/login')
         return await handler(request)
     return wrapper
 
 async def login_page(request):
     """Login page"""
-    session = await get_session(request)
-    
     # If already logged in, redirect to messages
     if await check_auth(request):
         return web.HTTPFound('/messages')
@@ -649,10 +671,12 @@ async def login_page(request):
         admin_password = os.getenv('ADMIN_PASSWORD', 'admin123')
         
         if username == admin_username and password == admin_password:
-            session['authenticated'] = True
-            session['username'] = username
+            # Set a cookie for authentication and redirect to messages
+            response = web.HTTPFound('/messages')
+            response.set_cookie('authenticated', 'true')
+            response.set_cookie('username', username)
             logger.info(f"User {username} logged in successfully")
-            return web.HTTPFound('/messages')
+            return response
         else:
             error_msg = "Invalid username or password"
             return web.Response(
@@ -668,18 +692,19 @@ async def login_page(request):
 
 async def logout(request):
     """Logout user"""
-    session = await get_session(request)
-    session.invalidate()
+    # Invalidate the cookie and redirect to login
+    response = web.HTTPFound('/login')
+    response.delete_cookie('authenticated')
+    response.delete_cookie('username')
     logger.info("User logged out")
-    return web.HTTPFound('/login')
+    return response
 
 async def messages_editor(request):
     """Message editor interface (protected)"""
     if not await check_auth(request):
         return web.HTTPFound('/login')
     
-    session = await get_session(request)
-    username = session.get('username', 'Unknown')
+    username = request.cookies.get('username', 'Unknown')
     
     if request.method == 'POST':
         data = await request.post()
@@ -894,13 +919,10 @@ async def start_web_server():
     """Start the web server"""
     app = web.Application()
     
-    # Setup session middleware
-    setup(app, EncryptedCookieStorage(secrets.token_urlsafe(32)))
-    
-    # Add routes
+    # Add handlers for web server
     app.router.add_get('/', root_handler)
-    app.router.add_get('/health', health_check)
     app.router.add_get('/status', status_page)
+    app.router.add_get('/health', health_check)
     app.router.add_get('/login', login_page)
     app.router.add_post('/login', login_page)
     app.router.add_get('/logout', logout)
@@ -957,25 +979,42 @@ def main():
     
     # Run both bot and web server concurrently
     async def run_both():
-        # Start web server in background
-        web_task = asyncio.create_task(start_web_server())
-        
-        # Start bot
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        
-        # Keep both running
         try:
+            # Start web server in background
+            web_task = asyncio.create_task(start_web_server())
+            
+            # Start bot
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling()
+            
+            logger.info("✅ Both bot and web server are now running!")
+            logger.info("🤖 Bot is listening for Telegram messages...")
+            logger.info("🌐 Web server is running for message editing...")
+            
+            # Keep both running - wait for web server task
             await web_task
+            
         except KeyboardInterrupt:
             logger.info("Shutting down...")
-            await application.updater.stop()
-            await application.stop()
-            await application.shutdown()
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}")
+        finally:
+            # Clean shutdown
+            try:
+                await application.updater.stop()
+                await application.stop()
+                await application.shutdown()
+            except Exception as e:
+                logger.error(f"Error during shutdown: {e}")
     
     # Run the async event loop
-    asyncio.run(run_both())
+    try:
+        asyncio.run(run_both())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
 
 if __name__ == "__main__":
     main()
