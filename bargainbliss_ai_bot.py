@@ -919,10 +919,10 @@ async def start_web_server():
     """Start the web server"""
     app = web.Application()
     
-    # Add handlers for web server
+    # Add routes
     app.router.add_get('/', root_handler)
-    app.router.add_get('/status', status_page)
     app.router.add_get('/health', health_check)
+    app.router.add_get('/status', status_page)
     app.router.add_get('/login', login_page)
     app.router.add_post('/login', login_page)
     app.router.add_get('/logout', logout)
@@ -974,16 +974,19 @@ def main():
     application.add_handler(CommandHandler("tips", tips_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Start the bot
-    logger.info("Bot started successfully!")
-    
     # Run both bot and web server concurrently
     async def run_both():
         try:
-            # Start web server in background
+            # Start web server FIRST and wait for it to be ready
+            logger.info("🚀 Starting web server first...")
             web_task = asyncio.create_task(start_web_server())
             
+            # Wait a moment for web server to fully start
+            await asyncio.sleep(2)
+            logger.info("✅ Web server should now be ready")
+            
             # Start bot
+            logger.info("🤖 Starting Telegram bot...")
             await application.initialize()
             await application.start()
             await application.updater.start_polling()
