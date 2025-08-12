@@ -957,8 +957,8 @@ async def keep_alive_ping():
     """Periodically ping the health endpoint to keep the service alive on Render"""
     while True:
         try:
-            # Wait 5 minutes between pings
-            await asyncio.sleep(300)  # 5 minutes
+            # Wait 30 seconds between pings (optimal for Render)
+            await asyncio.sleep(30)  # 30 seconds
             
             # Ping our own health endpoint
             async with aiohttp.ClientSession() as session:
