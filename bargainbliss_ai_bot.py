@@ -967,7 +967,7 @@ async def start_web_server():
         await asyncio.sleep(1)
 
 async def keep_alive_ping():
-    """Generate external traffic to prevent Render from sleeping (bulletproof solution)"""
+    """Generate external traffic to prevent Render from sleeping (bulletproof solution) - FIXED"""
     while True:
         try:
             # Wait 30 seconds between pings (optimal for Render's 15-minute sleep threshold)
