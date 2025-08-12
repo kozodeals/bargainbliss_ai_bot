@@ -953,6 +953,32 @@ async def start_web_server():
     while True:
         await asyncio.sleep(1)
 
+async def keep_alive_ping():
+    """Periodically ping the health endpoint to keep the service alive on Render"""
+    while True:
+        try:
+            # Wait 5 minutes between pings
+            await asyncio.sleep(300)  # 5 minutes
+            
+            # Ping our own health endpoint
+            async with aiohttp.ClientSession() as session:
+                try:
+                    # Get the port from environment or use default
+                    port = int(os.getenv('PORT', 8080))
+                    health_url = f"http://localhost:{port}/health"
+                    
+                    async with session.get(health_url, timeout=10) as response:
+                        if response.status == 200:
+                            logger.info("🔄 Keep-alive ping successful")
+                        else:
+                            logger.warning(f"⚠️ Keep-alive ping failed: {response.status}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Keep-alive ping error: {e}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Keep-alive ping loop error: {e}")
+            await asyncio.sleep(60)  # Wait 1 minute before retrying
+
 def main():
     """Main function"""
     global start_time
@@ -985,6 +1011,10 @@ def main():
             await asyncio.sleep(2)
             logger.info("✅ Web server should now be ready")
             
+            # Start keep-alive ping task
+            logger.info("🔄 Starting keep-alive ping...")
+            keep_alive_task = asyncio.create_task(keep_alive_ping())
+            
             # Start bot
             logger.info("🤖 Starting Telegram bot...")
             await application.initialize()
@@ -994,9 +1024,14 @@ def main():
             logger.info("✅ Both bot and web server are now running!")
             logger.info("🤖 Bot is listening for Telegram messages...")
             logger.info("🌐 Web server is running for message editing...")
+            logger.info("🔄 Keep-alive ping is active (prevents sleep)")
             
-            # Keep both running - wait for web server task
-            await web_task
+            # Keep all tasks running
+            await asyncio.gather(
+                web_task,
+                keep_alive_task,
+                return_exceptions=True
+            )
             
         except KeyboardInterrupt:
             logger.info("Shutting down...")
