@@ -977,34 +977,33 @@ async def keep_alive_ping():
             render_url = RENDER_EXTERNAL_URL
             
             try:
-                                    try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{render_url}/health", timeout=10) as response:
+                        if response.status == 200:
+                            logger.info(f"🔄 Self-ping successful: {render_url}")
+                            continue  # Success, move to next cycle
+                        else:
+                            logger.warning(f"⚠️ Self-ping failed: {response.status}")
+            except Exception as e:
+                logger.warning(f"⚠️ Self-ping error: {e}")
+                
+                # Strategy 2: Fallback to external services if self-ping fails
+                external_services = [
+                    "https://httpbin.org/get",
+                    "https://api.github.com/zen",
+                    "https://jsonplaceholder.typicode.com/posts/1"
+                ]
+                
+                for service in external_services:
+                    try:
                         async with aiohttp.ClientSession() as session:
-                            async with session.get(f"{render_url}/health", timeout=10) as response:
+                            async with session.get(service, timeout=10) as response:
                                 if response.status == 200:
-                                    logger.info(f"🔄 Self-ping successful: {render_url}")
-                                    continue  # Success, move to next cycle
-                                else:
-                                    logger.warning(f"⚠️ Self-ping failed: {response.status}")
+                                    logger.info(f"🌐 External keep-alive successful: {service}")
+                                    break  # One success is enough
                     except Exception as e:
-                        logger.warning(f"⚠️ Self-ping error: {e}")
-                        
-            # Strategy 2: Fallback to external services if self-ping fails
-            external_services = [
-                "https://httpbin.org/get",
-                "https://api.github.com/zen",
-                "https://jsonplaceholder.typicode.com/posts/1"
-            ]
-            
-            for service in external_services:
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(service, timeout=10) as response:
-                            if response.status == 200:
-                                logger.info(f"🌐 External keep-alive successful: {service}")
-                                break  # One success is enough
-                except Exception as e:
-                    logger.warning(f"⚠️ External service {service} failed: {e}")
-                    continue
+                        logger.warning(f"⚠️ External service {service} failed: {e}")
+                        continue
                     
         except Exception as e:
             logger.error(f"❌ Keep-alive loop error: {e}")
