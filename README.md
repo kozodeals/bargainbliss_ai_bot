@@ -53,6 +53,17 @@ TRACKING_ID=bargainbliss_ai_bot
 2. Get your API Key and Secret Key
 3. Set up your tracking ID
 
+### 4. Render Free Tier Configuration (Optional)
+
+If deploying on Render's free tier, add this environment variable to prevent sleep:
+
+```env
+# Keep-alive configuration for Render free tier
+RENDER_EXTERNAL_URL=https://your-bot-name.onrender.com
+```
+
+**Note:** The bot automatically generates external traffic every 30 seconds to prevent Render from sleeping after 15 minutes of inactivity.
+
 ### 4. Run the Bot
 
 ```bash
@@ -98,6 +109,45 @@ python bargainbliss_ai_bot.py
 - Comprehensive logging
 - Health check functionality
 - API connection testing
+
+## Render Free Tier Keep-Alive Strategy
+
+### How It Works
+The bot implements a **bulletproof keep-alive strategy** specifically designed for Render's free tier limitations:
+
+1. **External Traffic Generation**: Every 30 seconds, the bot generates external traffic to prevent sleep
+2. **Primary Strategy**: Self-pings its own Render URL (most reliable)
+3. **Fallback Strategy**: Pings external services if self-ping fails
+4. **Sleep Prevention**: Keeps the service active 24/7 on Render's free tier
+
+### Why This Works
+- **Render's Rule**: Services sleep after 15 minutes without **external** traffic
+- **Internal Traffic**: Localhost pings don't count as external traffic
+- **External Traffic**: Self-pinging your own Render URL counts as external traffic
+- **30-Second Intervals**: Ensures no gap longer than 15 minutes
+
+### Environment Variables
+```env
+# Your Render service URL (auto-detected if not set)
+RENDER_EXTERNAL_URL=https://your-bot-name.onrender.com
+```
+
+### Fallback Services
+If self-ping fails, the bot automatically tries:
+- `https://httpbin.org/get`
+- `https://api.github.com/zen`
+- `https://jsonplaceholder.typicode.com/posts/1`
+
+### Monitoring
+Check your logs for these messages:
+- `🔄 Self-ping successful: https://your-bot.onrender.com`
+- `🌐 External keep-alive successful: https://httpbin.org/get`
+- `⚠️ Self-ping failed: [status_code]`
+
+### Troubleshooting
+- **Service still sleeping?** Check if `RENDER_EXTERNAL_URL` is set correctly
+- **Keep-alive errors?** Check network connectivity and external service availability
+- **Logs show failures?** The fallback services should handle temporary issues
 
 ## Rate Limits
 

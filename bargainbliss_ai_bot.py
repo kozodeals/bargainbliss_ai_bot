@@ -2,6 +2,12 @@
 """
 Telegram bot for generating AliExpress affiliate links
 Updated with working API method and web interface
+
+KEEP-ALIVE STRATEGY:
+- Generates external traffic every 30 seconds to prevent Render free tier sleep
+- Primary: Self-pings own Render URL (most reliable)
+- Fallback: External service pings if self-ping fails
+- Prevents 15-minute sleep timeout on Render free tier
 """
 
 import os
@@ -43,6 +49,9 @@ TRACKING_ID = os.getenv('TRACKING_ID', 'bargainbliss_ai_bot')  # Use human-reada
 
 # Check if bot should be paused (for testing)
 PAUSE_BOT = os.getenv('PAUSE_BOT', 'false').lower() == 'true'
+
+# Keep-alive configuration for Render free tier
+RENDER_EXTERNAL_URL = os.getenv('RENDER_EXTERNAL_URL', 'https://bargainbliss-ai-bot.onrender.com')
 
 # Validate required environment variables
 if not all([TELEGRAM_TOKEN, API_KEY, SECRET_KEY]):
@@ -949,35 +958,56 @@ async def start_web_server():
     logger.info("🔐 Default login credentials: admin / admin123")
     logger.info("💡 Set ADMIN_USERNAME and ADMIN_PASSWORD environment variables to change credentials")
     
+    # Log the external keep-alive strategy
+    logger.info(f"🔄 External keep-alive strategy: Self-ping {RENDER_EXTERNAL_URL} every 30 seconds")
+    logger.info(f"🔄 Fallback: External services if self-ping fails")
+    
     # Keep the server running
     while True:
         await asyncio.sleep(1)
 
 async def keep_alive_ping():
-    """Periodically ping the health endpoint to keep the service alive on Render"""
+    """Generate external traffic to prevent Render from sleeping (bulletproof solution)"""
     while True:
         try:
-            # Wait 30 seconds between pings (optimal for Render)
+            # Wait 30 seconds between pings (optimal for Render's 15-minute sleep threshold)
             await asyncio.sleep(30)  # 30 seconds
             
-            # Ping our own health endpoint
-            async with aiohttp.ClientSession() as session:
-                try:
-                    # Get the port from environment or use default
-                    port = int(os.getenv('PORT', 8080))
-                    health_url = f"http://localhost:{port}/health"
-                    
-                    async with session.get(health_url, timeout=10) as response:
+            # Strategy 1: Self-ping our own external Render URL (most reliable)
+            render_url = RENDER_EXTERNAL_URL
+            
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{render_url}/health", timeout=10) as response:
                         if response.status == 200:
-                            logger.info("🔄 Keep-alive ping successful")
+                            logger.info(f"🔄 Self-ping successful: {render_url}")
+                            continue  # Success, move to next cycle
                         else:
-                            logger.warning(f"⚠️ Keep-alive ping failed: {response.status}")
+                            logger.warning(f"⚠️ Self-ping failed: {response.status}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Self-ping error: {e}")
+                        
+            # Strategy 2: Fallback to external services if self-ping fails
+            external_services = [
+                "https://httpbin.org/get",
+                "https://api.github.com/zen",
+                "https://jsonplaceholder.typicode.com/posts/1"
+            ]
+            
+            for service in external_services:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(service, timeout=10) as response:
+                            if response.status == 200:
+                                logger.info(f"🌐 External keep-alive successful: {service}")
+                                break  # One success is enough
                 except Exception as e:
-                    logger.warning(f"⚠️ Keep-alive ping error: {e}")
+                    logger.warning(f"⚠️ External service {service} failed: {e}")
+                    continue
                     
         except Exception as e:
-            logger.error(f"❌ Keep-alive ping loop error: {e}")
-            await asyncio.sleep(60)  # Wait 1 minute before retrying
+            logger.error(f"❌ Keep-alive loop error: {e}")
+            await asyncio.sleep(10)  # Quick retry on errors
 
 def main():
     """Main function"""
