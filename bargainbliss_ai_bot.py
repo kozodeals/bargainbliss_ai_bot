@@ -977,13 +977,14 @@ async def keep_alive_ping():
             render_url = RENDER_EXTERNAL_URL
             
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"{render_url}/health", timeout=10) as response:
-                        if response.status == 200:
-                            logger.info(f"🔄 Self-ping successful: {render_url}")
-                            continue  # Success, move to next cycle
-                        else:
-                            logger.warning(f"⚠️ Self-ping failed: {response.status}")
+                                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(f"{render_url}/health", timeout=10) as response:
+                                if response.status == 200:
+                                    logger.info(f"🔄 Self-ping successful: {render_url}")
+                                    continue  # Success, move to next cycle
+                                else:
+                                    logger.warning(f"⚠️ Self-ping failed: {response.status}")
                     except Exception as e:
                         logger.warning(f"⚠️ Self-ping error: {e}")
                         
